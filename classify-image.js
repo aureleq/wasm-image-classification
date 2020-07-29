@@ -2,6 +2,7 @@
 const Module = require('./edge-impulse-standalone');
 // sharp module to retrieve image pixels information
 const sharp = require('sharp');
+const WebSocket = require('ws');
 
 
 // Classifier module
@@ -59,36 +60,46 @@ class EdgeImpulseClassifier {
 }
 
 
-if (!process.argv[2]) {
-    return console.error('Requires one parameter (image file)');
-}
-
-
 //Initialize the classifier
 let classifier = new EdgeImpulseClassifier();
 const cl = classifier.init();
 
-// Retrieve raw information from image and parse it for the classifier
-let raw_features = [];
-const buf = sharp(process.argv[2]).raw().toBuffer()
-    .then(img_buffer => {
-        let buf_string = img_buffer.toString('hex');
-        
-        // store RGB pixel value and convert to integer
-        for (let i=0; i<buf_string.length; i+=6) {
-            raw_features.push(parseInt(buf_string.slice(i, i+6), 16));
-        }
-    })
-    .catch(err => {
-        console.error('Failed to load image', err);
-    });
+// Initialize websocket
+const wss = new WebSocket.Server({ port: 8080 });
 
-// Run classifier once image raw features retrieved and classifier initialized
-Promise.all([cl, buf])
-    .then(() => {
-        let result = classifier.classify(raw_features);
-        console.log(result);
+// Incoming websocket connection
+wss.on('connection', function connection(ws) {
+
+    ws.on('message', function incoming(message) {
+        console.log('received new image');
+
+        // Retrieve raw information from image in argument and parse it for the classifier
+        let raw_features = [];
+        const buf = sharp(Buffer.from(message, 'base64')).raw().toBuffer()
+            .then(img_buffer => {
+                let buf_string = img_buffer.toString('hex');
+                
+                // store RGB pixel value and convert to integer
+                for (let i=0; i<buf_string.length; i+=6) {
+                    raw_features.push(parseInt(buf_string.slice(i, i+6), 16));
+                }
+            })
+            .catch(err => {
+                console.error('Failed to load image', err);
+            });
+        
+        // Run classifier once image raw features retrieved and classifier initialized
+        Promise.all([cl, buf])
+        .then(() => {
+            let result = classifier.classify(raw_features);
+            console.log();
+            ws.send(JSON.stringify(result));
+
+        })
+        .catch(err => {
+            console.error('Failed to run classifier', err);
+        })
+      
     })
-    .catch(err => {
-        console.error('Failed to run classifier', err);
-    })
+
+});
